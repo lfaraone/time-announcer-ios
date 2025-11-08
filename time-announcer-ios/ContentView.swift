@@ -6,56 +6,82 @@
 //
 
 import SwiftUI
-import SwiftData
+import AVFoundation
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @StateObject private var announcer = TimeAnnouncer()
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
+        NavigationStack {
+            VStack(spacing: 30) {
+                Spacer()
+
+                Group {
+                    switch announcer.authorizationStatus {
+                    case .notDetermined:
+                        ProgressView()
+                    case .denied:
+                        Text("Personal Voice authorization has been denied. Please enable it in Settings > Accessibility > Personal Voice.")
+                            .multilineTextAlignment(.center)
+                    case .unsupported:
+                        Text("Personal Voice is not supported on this device or operating system version.")
+                            .multilineTextAlignment(.center)
+                    case .authorized:
+                        if announcer.availableVoices.isEmpty {
+                            Text("No Personal Voices found. Please create one in Settings > Accessibility > Personal Voice.")
+                                .multilineTextAlignment(.center)
+                        } else {
+                            VStack {
+                                Text("Select a Personal Voice").font(.headline)
+                                Picker("Select a Personal Voice", selection: $announcer.selectedVoiceIdentifier) {
+                                    ForEach(announcer.availableVoices, id: \.identifier) { voice in
+                                        Text("\(voice.name) (\(languageDisplayName(for: voice)))")
+                                            .tag(voice.identifier as String?)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .labelsHidden()
+                            }
+                        }
+                    @unknown default:
+                        Text("An unknown error occurred regarding Personal Voice authorization.")
+                            .multilineTextAlignment(.center)
                     }
                 }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
+                .padding(.horizontal)
+
+                Spacer()
+                
+                Button(action: announcer.toggleSpeech) {
+                    Text(announcer.isSpeaking ? "Stop" : "Start Saying The Time")
+                        .font(.headline)
+                        .padding()
+                        .frame(maxWidth: .infinity)
+                        .background(announcer.isSpeaking ? Color.red : Color.accentColor)
+                        .foregroundColor(.white)
+                        .clipShape(Capsule())
                 }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
+                .padding()
+                .disabled(announcer.authorizationStatus != .authorized || announcer.availableVoices.isEmpty)
             }
-        } detail: {
-            Text("Select an item")
+            .navigationTitle("Time Announcer")
         }
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
+    private func languageDisplayName(for voice: AVSpeechSynthesisVoice) -> String {
+        // On some OS versions, a US English Personal Voice can be incorrectly identified
+        // with the language code "zh-CH". We can correct the display text here.
+        if voice.voiceTraits.contains(.isPersonalVoice) && voice.language == "zh-CH" {
+            // Using Locale to get a user-friendly display name for en-US.
+            return Locale.current.localizedString(forIdentifier: "en-US") ?? "English (US)"
         }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
-        }
+        
+        // For other voices, or if the bug is fixed, display the reported language,
+        // attempting to make it more user-friendly.
+        return Locale.current.localizedString(forIdentifier: voice.language) ?? voice.language
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
 }
